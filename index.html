@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Daily Update USA – Admin</title>
+<style>
+:root{--ink:#14213d;--red:#c8102e;--bg:#f2f3f7;--line:#d5d8e2}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif;line-height:1.5}
+.wrap{max-width:820px;margin:0 auto;padding:16px}
+header{background:var(--ink);color:#fff;border-bottom:4px solid var(--red)}
+header .wrap{display:flex;justify-content:space-between;align-items:center}
+header h1{margin:0;font-size:1.2rem}
+button{cursor:pointer;border:0;border-radius:6px;padding:10px 16px;font-weight:700;font-size:.95rem}
+.primary{background:var(--red);color:#fff}.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+button:disabled{opacity:.6;cursor:wait}
+.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px}
+.card h2{margin:0 0 12px;font-size:1.05rem}
+label{display:block;font-weight:700;font-size:.85rem;margin:10px 0 4px}
+input[type=text],input[type=email],input[type=password],textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;font:inherit}
+textarea{min-height:140px;resize:vertical}
+.row{display:flex;gap:14px}
+.row .l{flex:1 1 60%;min-width:0}.row .r{flex:1 1 40%;min-width:0}
+.prev{width:100%;max-height:180px;object-fit:cover;border-radius:6px;margin-top:8px;display:none}
+.msg{margin-top:10px;font-size:.9rem;min-height:1.2em}
+.ok{color:#0a7a33}.err{color:#b00020}
+.hidden{display:none}
+#login{max-width:380px;margin:60px auto}
+small{color:#5c6273}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<section id="login" class="card hidden">
+  <h2>Admin login</h2>
+  <label for="em">Email</label><input type="email" id="em" autocomplete="username">
+  <label for="pw">Password</label><input type="password" id="pw" autocomplete="current-password">
+  <p><button class="primary" id="loginBtn">Log in</button></p>
+  <div class="msg err" id="loginMsg"></div>
+</section>
+
+<!-- ============ PANEL ============ -->
+<section id="panel" class="hidden">
+  <header><div class="wrap"><h1>Daily Update USA – Admin</h1><button class="ghost" id="logoutBtn">Log out</button></div></header>
+  <div class="wrap" id="slots"></div>
+</section>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCUBsazHzsb4HUeu4sg3cWRRJFGJGbK1-Q",
+  authDomain: "daily-update-usa.firebaseapp.com",
+  projectId: "daily-update-usa",
+  storageBucket: "daily-update-usa.firebasestorage.app",
+  messagingSenderId: "342674212806",
+  appId: "1:342674212806:web:be76407ad95f47c72ed4c7"
+};
+const CLOUD_NAME = "oknbij8b", UPLOAD_PRESET = "daily_update_usa";
+
+const app = initializeApp(firebaseConfig), db = getFirestore(app), auth = getAuth(app);
+const $ = id => document.getElementById(id);
+const ORD = ["First","Second","Third","Fourth","Fifth"];
+
+/* ---------- Login ---------- */
+$("loginBtn").onclick = async () => {
+  $("loginMsg").textContent = "";
+  try { await signInWithEmailAndPassword(auth, $("em").value.trim(), $("pw").value); }
+  catch(e){ $("loginMsg").textContent = "Login failed. Check your email and password."; }
+};
+$("logoutBtn").onclick = () => signOut(auth);
+
+let built = false;
+onAuthStateChanged(auth, user => {
+  $("login").classList.toggle("hidden", !!user);
+  $("panel").classList.toggle("hidden", !user);
+  if(user && !built){ built = true; buildSlots(); }
+});
+
+/* ---------- Cloudinary upload (unsigned) ---------- */
+async function uploadImage(file){
+  const fd = new FormData();
+  fd.append("file", file); fd.append("upload_preset", UPLOAD_PRESET);
+  const r = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {method:"POST", body:fd});
+  const j = await r.json();
+  if(!r.ok) throw new Error(j.error?.message || "Image upload failed");
+  return j.secure_url;
+}
+
+/* ---------- Build the 5 content boxes ---------- */
+function buildSlots(){
+  const holder = $("slots");
+  for(let n=1; n<=5; n++){
+    const c = document.createElement("div"); c.className = "card";
+    c.innerHTML = `
+      <h2>Add your ${ORD[n-1].toLowerCase()} content</h2>
+      <label for="t${n}">Headline</label><input type="text" id="t${n}" maxlength="150">
+      <div class="row">
+        <div class="l"><label for="c${n}">News text</label><textarea id="c${n}"></textarea></div>
+        <div class="r"><label for="f${n}">Image (optional)</label>
+          <input type="file" id="f${n}" accept="image/*">
+          <img class="prev" id="p${n}" alt="">
+          <label><input type="checkbox" id="rm${n}"> Remove current image</label>
+        </div>
+      </div>
+      <p><button class="primary" id="s${n}">Save content ${n}</button></p>
+      <div class="msg" id="m${n}"></div>`;
+    holder.appendChild(c);
+    load(n);
+    $("f"+n).onchange = e => { const f = e.target.files[0]; const p = $("p"+n); if(f){ p.src = URL.createObjectURL(f); p.style.display = "block"; } };
+    $("s"+n).onclick = () => save(n);
+  }
+}
+
+async function load(n){
+  const s = await getDoc(doc(db,"news","slot"+n));
+  if(!s.exists()) return;
+  const d = s.data();
+  $("t"+n).value = d.title || ""; $("c"+n).value = d.content || "";
+  if(d.imageUrl){ $("p"+n).src = d.imageUrl; $("p"+n).style.display = "block"; }
+  $("s"+n).dataset.img = d.imageUrl || "";
+}
+
+async function save(n){
+  const btn = $("s"+n), msg = $("m"+n);
+  const title = $("t"+n).value.trim(), content = $("c"+n).value.trim();
+  if(!title || !content){ msg.className="msg err"; msg.textContent="Please write a headline and the news text."; return; }
+  btn.disabled = true; msg.className = "msg"; msg.textContent = "Saving…";
+  try{
+    let imageUrl = btn.dataset.img || "";
+    const file = $("f"+n).files[0];
+    if(file){ msg.textContent = "Uploading image…"; imageUrl = await uploadImage(file); }
+    else if($("rm"+n).checked){ imageUrl = ""; }
+    await setDoc(doc(db,"news","slot"+n), { title, content, imageUrl, updatedAt: serverTimestamp() }); // overwrites the old news in this slot
+    btn.dataset.img = imageUrl; $("f"+n).value = ""; $("rm"+n).checked = false;
+    if(!imageUrl){ $("p"+n).style.display = "none"; }
+    msg.className = "msg ok"; msg.textContent = "Saved. The website is updated.";
+  }catch(e){ console.error(e); msg.className = "msg err"; msg.textContent = "Could not save: " + e.message; }
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>
